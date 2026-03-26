@@ -1,0 +1,13 @@
+.venv/
+*.tar.gz
+__pycache__/
+*.pyc
+
+app/.venv/
+app/.venv.tar.gz
+app/data/
+app/build/
+app/dataset/*.parquet
+
+.DS_Store
+Thumbs.db
