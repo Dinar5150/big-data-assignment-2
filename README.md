@@ -1,25 +1,22 @@
 # big-data-assignment-2
 
-This repository follows the course template for Assignment 2.
+Simple search engine assignment using PySpark, Hadoop MapReduce, and Cassandra.
 
-## How to run
+## Run
 
-1. Install Docker and Docker Compose.
-2. From the repository root run:
+1. Put `a.parquet` in `app/`.
+2. If you want, `app/dataset/a.parquet` also works as a fallback.
+3. Run:
 
 ```bash
 docker compose up
 ```
 
-The master container mounts the local `app/` folder to `/app` and runs `/app/app.sh`.
+The master container mounts `app/` to `/app` and runs `/app/app.sh`.
 
-## Repository layout
+## Main HDFS paths
 
-- `docker-compose.yml`: Hadoop master, Hadoop worker, and Cassandra containers
-- `app/`: all scripts and Python code used by the assignment
-- `report.pdf`: placeholder report file that you should replace before submission
-
-## Notes
-
-- The scripts are written to rebuild the index from scratch each time.
-- Put one parquet file from the provided dataset at `app/dataset/a.parquet`.
+- `/data`
+- `/input/data`
+- `/tmp/indexer`
+- `/indexer`

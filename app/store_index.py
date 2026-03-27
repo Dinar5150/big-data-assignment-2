@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 import time
@@ -6,29 +5,16 @@ import time
 from cassandra.cluster import Cluster
 
 
-CASSANDRA_HOST = os.environ.get("CASSANDRA_HOST", "cassandra-server")
-KEYSPACE = os.environ.get("CASSANDRA_KEYSPACE", "search_engine")
+CASSANDRA_HOST = "cassandra-server"
+KEYSPACE = "search_engine"
 
 
-def stream_hdfs_lines(path):
-    process = subprocess.Popen(
-        ["hdfs", "dfs", "-text", f"{path}/part-*"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line = line.strip()
-        if line:
-            yield line
-    return_code = process.wait()
-    if return_code != 0:
-        stderr = process.stderr.read() if process.stderr is not None else ""
-        raise RuntimeError(f"Failed to read HDFS path {path}: {stderr}")
+def hdfs_lines(path):
+    output = subprocess.check_output(["hdfs", "dfs", "-text", f"{path}/part-*"], text=True)
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
-def connect_with_retry():
+def connect():
     last_error = None
     for _ in range(60):
         try:
@@ -41,100 +27,56 @@ def connect_with_retry():
     raise RuntimeError(f"Could not connect to Cassandra: {last_error}")
 
 
-def setup_schema(session):
-    session.execute(
-        f"""
-        CREATE KEYSPACE IF NOT EXISTS {KEYSPACE}
-        WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
-        """
-    )
-    session.set_keyspace(KEYSPACE)
-
-    session.execute("DROP TABLE IF EXISTS vocabulary")
-    session.execute("DROP TABLE IF EXISTS postings")
-    session.execute("DROP TABLE IF EXISTS documents")
-    session.execute("DROP TABLE IF EXISTS corpus_stats")
-
-    session.execute(
-        """
-        CREATE TABLE vocabulary (
-            term text PRIMARY KEY,
-            df int
-        )
-        """
-    )
-    session.execute(
-        """
-        CREATE TABLE postings (
-            term text,
-            doc_id text,
-            tf int,
-            title text,
-            doc_length int,
-            PRIMARY KEY (term, doc_id)
-        )
-        """
-    )
-    session.execute(
-        """
-        CREATE TABLE documents (
-            doc_id text PRIMARY KEY,
-            title text,
-            doc_length int
-        )
-        """
-    )
-    session.execute(
-        """
-        CREATE TABLE corpus_stats (
-            stat_name text PRIMARY KEY,
-            stat_value double
-        )
-        """
-    )
-
-
-def load_vocabulary(session, index_root):
-    statement = session.prepare("INSERT INTO vocabulary (term, df) VALUES (?, ?)")
-    for line in stream_hdfs_lines(f"{index_root}/vocabulary"):
-        term, df = line.split("\t")
-        session.execute(statement, (term, int(df)))
-
-
-def load_documents(session, index_root):
-    statement = session.prepare("INSERT INTO documents (doc_id, title, doc_length) VALUES (?, ?, ?)")
-    for line in stream_hdfs_lines(f"{index_root}/documents"):
-        doc_id, title, doc_length = line.split("\t")
-        session.execute(statement, (doc_id, title, int(doc_length)))
-
-
-def load_stats(session, index_root):
-    statement = session.prepare("INSERT INTO corpus_stats (stat_name, stat_value) VALUES (?, ?)")
-    for line in stream_hdfs_lines(f"{index_root}/stats"):
-        stat_name, stat_value = line.split("\t")
-        session.execute(statement, (stat_name, float(stat_value)))
-
-
-def load_postings(session, index_root):
-    statement = session.prepare(
-        "INSERT INTO postings (term, doc_id, tf, title, doc_length) VALUES (?, ?, ?, ?, ?)"
-    )
-    for line in stream_hdfs_lines(f"{index_root}/index"):
-        term, df, doc_id, title, tf, doc_length = line.split("\t")
-        session.execute(statement, (term, doc_id, int(tf), title, int(doc_length)))
-
-
 def main():
     index_root = sys.argv[1] if len(sys.argv) > 1 else "/indexer"
 
-    cluster, session = connect_with_retry()
+    cluster, session = connect()
+
     try:
-        setup_schema(session)
-        load_vocabulary(session, index_root)
-        load_documents(session, index_root)
-        load_stats(session, index_root)
-        load_postings(session, index_root)
-        print("Index data stored in Cassandra.")
+        session.execute(
+            f"""
+            CREATE KEYSPACE IF NOT EXISTS {KEYSPACE}
+            WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
+            """
+        )
+        session.set_keyspace(KEYSPACE)
+
+        session.execute("DROP TABLE IF EXISTS vocabulary")
+        session.execute("DROP TABLE IF EXISTS postings")
+        session.execute("DROP TABLE IF EXISTS documents")
+        session.execute("DROP TABLE IF EXISTS corpus_stats")
+
+        session.execute("CREATE TABLE vocabulary (term text PRIMARY KEY, df int)")
+        session.execute("CREATE TABLE postings (term text, doc_id text, tf int, title text, doc_length int, PRIMARY KEY (term, doc_id))")
+        session.execute("CREATE TABLE documents (doc_id text PRIMARY KEY, title text, doc_length int)")
+        session.execute("CREATE TABLE corpus_stats (stat_name text PRIMARY KEY, stat_value double)")
+
+        for line in hdfs_lines(f"{index_root}/vocabulary"):
+            term, df = line.split("\t")
+            session.execute("INSERT INTO vocabulary (term, df) VALUES (%s, %s)", (term, int(df)))
+
+        for line in hdfs_lines(f"{index_root}/documents"):
+            doc_id, title, doc_length = line.split("\t")
+            session.execute(
+                "INSERT INTO documents (doc_id, title, doc_length) VALUES (%s, %s, %s)",
+                (doc_id, title, int(doc_length)),
+            )
+
+        for line in hdfs_lines(f"{index_root}/stats"):
+            stat_name, stat_value = line.split("\t")
+            session.execute(
+                "INSERT INTO corpus_stats (stat_name, stat_value) VALUES (%s, %s)",
+                (stat_name, float(stat_value)),
+            )
+
+        for line in hdfs_lines(f"{index_root}/index"):
+            term, df, doc_id, title, tf, doc_length = line.split("\t")
+            session.execute(
+                "INSERT INTO postings (term, doc_id, tf, title, doc_length) VALUES (%s, %s, %s, %s, %s)",
+                (term, doc_id, int(tf), title, int(doc_length)),
+            )
+
+        print("done storing index")
     finally:
         session.shutdown()
         cluster.shutdown()

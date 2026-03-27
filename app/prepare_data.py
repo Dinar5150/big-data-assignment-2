@@ -7,9 +7,6 @@ from tqdm import tqdm
 from pyspark.sql import SparkSession
 
 
-HDFS_URI = "hdfs://cluster-master:9000"
-
-
 spark = SparkSession.builder \
     .appName('data preparation') \
     .master("local") \
@@ -37,9 +34,7 @@ def create_doc(row):
         f.write(row['text'])
 
 
-rows = df.collect()
-for row in tqdm(rows):
-    create_doc(row)
+df.foreach(create_doc)
 
 
 subprocess.run(["hdfs", "dfs", "-rm", "-r", "-f", "/data"], check=True)
@@ -64,8 +59,7 @@ def doc_to_line(item):
     return "\t".join([doc_id, title, text])
 
 
-docs = spark.sparkContext.wholeTextFiles(f"{HDFS_URI}/data/*")
-docs.map(doc_to_line).filter(lambda line: line is not None).coalesce(1).saveAsTextFile(f"{HDFS_URI}/input/data")
-
+docs = spark.sparkContext.wholeTextFiles("hdfs://cluster-master:9000/data/*")
+docs.map(doc_to_line).filter(lambda line: line is not None).coalesce(1).saveAsTextFile("hdfs://cluster-master:9000/input/data")
 
 spark.stop()
