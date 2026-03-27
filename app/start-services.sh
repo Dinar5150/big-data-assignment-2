@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# only use the nodes that exist in docker-compose.yml
+cat > "$HADOOP_HOME/etc/hadoop/workers" <<EOF
+cluster-master
+cluster-slave-1
+EOF
+
 $HADOOP_HOME/sbin/start-dfs.sh
 $HADOOP_HOME/sbin/start-yarn.sh
 mapred --daemon start historyserver
