@@ -1,31 +1,41 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "Starting HDFS daemons"
+# This will run only by the master node
+
+# starting HDFS daemons
 $HADOOP_HOME/sbin/start-dfs.sh
 
-echo "Starting YARN daemons"
+# starting Yarn daemons
 $HADOOP_HOME/sbin/start-yarn.sh
+# yarn --daemon start resourcemanager
 
-echo "Starting MapReduce history server"
+# Start mapreduce history server
 mapred --daemon start historyserver
 
-echo "Waiting a bit for HDFS"
-sleep 10
+# track process IDs of services
+jps -lm
 
-echo "Leaving safe mode if needed"
-hdfs dfsadmin -safemode leave || true
+# subtool to perform administrator functions on HDFS
+# outputs a brief report on the overall HDFS filesystem
+hdfs dfsadmin -report
 
-echo "Creating Spark jar folder in HDFS"
+# If namenode in safemode then leave it
+hdfs dfsadmin -safemode leave
+
+# create a directory for spark apps in HDFS
 hdfs dfs -mkdir -p /apps/spark/jars
-hdfs dfs -put -f /usr/local/spark/jars/* /apps/spark/jars/
-hdfs dfs -chmod -R 755 /apps/spark/jars
+hdfs dfs -chmod 744 /apps/spark/jars
 
-echo "Creating root HDFS home"
+# Copy all jars to HDFS
+hdfs dfs -put /usr/local/spark/jars/* /apps/spark/jars/
+hdfs dfs -chmod +rx /apps/spark/jars/
+
+# print version of Scala of Spark
+scala -version
+
+# track process IDs of services
+jps -lm
+
+# Create a directory for root user on HDFS
 hdfs dfs -mkdir -p /user/root
-
-echo "HDFS report"
-hdfs dfsadmin -report || true
-
-echo "Running processes"
-jps -lm || true

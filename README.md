@@ -22,5 +22,4 @@ The master container mounts the local `app/` folder to `/app` and runs `/app/app
 ## Notes
 
 - The scripts are written to rebuild the index from scratch each time.
-- If you already have the exact Kaggle parquet file, place it at `app/dataset/a.parquet`.
-- If `app/dataset/a.parquet` is missing, the pipeline falls back to a public parquet file with the same `id`, `title`, and `text` style fields so the repo can still run automatically.
+- Put one parquet file from the provided dataset at `app/dataset/a.parquet`.

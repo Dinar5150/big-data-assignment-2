@@ -71,9 +71,6 @@ def main():
     spark = (
         SparkSession.builder
         .appName("prepare-data")
-        .master("local[1]")
-        .config("spark.sql.parquet.enableVectorizedReader", "true")
-        .config("spark.sql.shuffle.partitions", "1")
         .getOrCreate()
     )
 
@@ -90,7 +87,7 @@ def main():
     )
 
     written = 0
-    for row in df.toLocalIterator():
+    for row in df.collect():
         doc_id = make_safe_doc_id(str(row["id"]).strip())
         title = make_safe_title(str(row["title"]))
         text = clean_text(row["text"])
@@ -111,10 +108,11 @@ def main():
     run_cmd(["hdfs", "dfs", "-rm", "-r", "-f", "/data"])
     run_cmd(["hdfs", "dfs", "-rm", "-r", "-f", "/input/data"])
     run_cmd(["hdfs", "dfs", "-mkdir", "-p", "/data"])
+    run_cmd(["hdfs", "dfs", "-mkdir", "-p", "/input"])
     for file_path in sorted(glob.glob(os.path.join(LOCAL_DATA_DIR, "*.txt"))):
         run_cmd(["hdfs", "dfs", "-put", "-f", file_path, "/data"])
 
-    docs_rdd = spark.sparkContext.wholeTextFiles(f"{HDFS_URI}/data/*", minPartitions=1)
+    docs_rdd = spark.sparkContext.wholeTextFiles(f"{HDFS_URI}/data/*")
     input_rdd = docs_rdd.map(parse_doc_from_path).filter(lambda item: item is not None).coalesce(1)
     input_rdd.saveAsTextFile(f"{HDFS_URI}/input/data")
 

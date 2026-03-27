@@ -33,9 +33,6 @@ services:
   cassandra-server:
     image: cassandra
     container_name: cassandra-server
-    environment:
-      MAX_HEAP_SIZE: 512M
-      HEAP_NEWSIZE: 128M
     ports:
       - "7000:7000"
     networks:

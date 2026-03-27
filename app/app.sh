@@ -26,7 +26,5 @@ bash prepare_data.sh
 echo "Creating and storing the index"
 bash index.sh
 
-echo "Running demo searches"
-bash search.sh "computer science"
-bash search.sh "history war"
-bash search.sh "music art"
+echo "Running the ranker"
+bash search.sh "this is a query!"
