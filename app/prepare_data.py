@@ -1,123 +1,71 @@
-import glob
 import os
-import re
 import shutil
 import subprocess
-import sys
 
 from pathvalidate import sanitize_filename
+from tqdm import tqdm
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 
 
-HDFS_URI = os.environ.get("HDFS_URI", "hdfs://cluster-master:9000")
-LOCAL_DATA_DIR = "/app/data"
+HDFS_URI = "hdfs://cluster-master:9000"
 
 
-def run_cmd(command):
-    subprocess.run(command, check=True)
+spark = SparkSession.builder \
+    .appName('data preparation') \
+    .master("local") \
+    .config("spark.sql.parquet.enableVectorizedReader", "true") \
+    .getOrCreate()
 
 
-def make_safe_title(title):
-    title = (title or "").strip()
-    title = re.sub(r"\s+", "_", title)
-    title = sanitize_filename(title)
-    title = title.replace(" ", "_")
-    if not title:
-        title = "untitled"
-    return title[:120]
+if os.path.isdir("data"):
+    shutil.rmtree("data")
+os.makedirs("data", exist_ok=True)
 
 
-def clean_text(text):
-    text = text or ""
-    return re.sub(r"\s+", " ", text).strip()
+df = spark.read.parquet("/a.parquet")
+n = 1000
+df = df.select(['id', 'title', 'text']) \
+    .dropna(subset=['id', 'title', 'text']) \
+    .filter("trim(text) <> ''") \
+    .sample(fraction=100 * n / df.count(), seed=0) \
+    .limit(n)
 
 
-def make_safe_doc_id(doc_id):
-    doc_id = re.sub(r"[^0-9A-Za-z-]", "", doc_id)
-    if not doc_id:
-        doc_id = "0"
-    return doc_id
+def create_doc(row):
+    filename = "data/" + sanitize_filename(str(row['id']) + "_" + row['title']).replace(" ", "_") + ".txt"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(row['text'])
 
 
-def prepare_local_folder():
-    if os.path.isdir(LOCAL_DATA_DIR):
-        shutil.rmtree(LOCAL_DATA_DIR)
-    os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
+rows = df.collect()
+for row in tqdm(rows):
+    create_doc(row)
 
 
-def parse_doc_from_path(item):
+subprocess.run(["hdfs", "dfs", "-rm", "-r", "-f", "/data"], check=True)
+subprocess.run(["hdfs", "dfs", "-rm", "-r", "-f", "/input/data"], check=True)
+subprocess.run(["hdfs", "dfs", "-mkdir", "-p", "/input"], check=True)
+subprocess.run(["hdfs", "dfs", "-put", "-f", "data", "/"], check=True)
+
+
+def doc_to_line(item):
     path, text = item
     filename = os.path.basename(path)
-    if not filename.endswith(".txt"):
+
+    if not filename.endswith(".txt") or "_" not in filename:
         return None
 
-    base_name = filename[:-4]
-    if "_" not in base_name:
-        return None
+    doc_id, title = filename[:-4].split("_", 1)
+    text = " ".join((text or "").split())
 
-    doc_id, title = base_name.split("_", 1)
-    text = clean_text(text)
     if not text:
         return None
 
     return "\t".join([doc_id, title, text])
 
 
-def main():
-    parquet_path = sys.argv[1] if len(sys.argv) > 1 else f"{HDFS_URI}/parquet/a.parquet"
-    document_limit = int(sys.argv[2]) if len(sys.argv) > 2 else 1000
-
-    spark = (
-        SparkSession.builder
-        .appName("prepare-data")
-        .getOrCreate()
-    )
-
-    prepare_local_folder()
-
-    df = (
-        spark.read.parquet(parquet_path)
-        .select("id", "title", "text")
-        .where(F.col("id").isNotNull())
-        .where(F.col("title").isNotNull())
-        .where(F.col("text").isNotNull())
-        .where(F.length(F.trim(F.col("text"))) > 0)
-        .limit(document_limit)
-    )
-
-    written = 0
-    for row in df.collect():
-        doc_id = make_safe_doc_id(str(row["id"]).strip())
-        title = make_safe_title(str(row["title"]))
-        text = clean_text(row["text"])
-        if not doc_id or not text:
-            continue
-
-        file_name = f"{doc_id}_{title}.txt"
-        file_path = os.path.join(LOCAL_DATA_DIR, file_name)
-        with open(file_path, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        written += 1
-
-    if written < document_limit:
-        raise RuntimeError(f"Only wrote {written} documents, expected at least {document_limit}.")
-
-    print(f"Wrote {written} documents.")
-
-    run_cmd(["hdfs", "dfs", "-rm", "-r", "-f", "/data"])
-    run_cmd(["hdfs", "dfs", "-rm", "-r", "-f", "/input/data"])
-    run_cmd(["hdfs", "dfs", "-mkdir", "-p", "/data"])
-    run_cmd(["hdfs", "dfs", "-mkdir", "-p", "/input"])
-    for file_path in sorted(glob.glob(os.path.join(LOCAL_DATA_DIR, "*.txt"))):
-        run_cmd(["hdfs", "dfs", "-put", "-f", file_path, "/data"])
-
-    docs_rdd = spark.sparkContext.wholeTextFiles(f"{HDFS_URI}/data/*")
-    input_rdd = docs_rdd.map(parse_doc_from_path).filter(lambda item: item is not None).coalesce(1)
-    input_rdd.saveAsTextFile(f"{HDFS_URI}/input/data")
-
-    spark.stop()
+docs = spark.sparkContext.wholeTextFiles(f"{HDFS_URI}/data/*")
+docs.map(doc_to_line).filter(lambda line: line is not None).coalesce(1).saveAsTextFile(f"{HDFS_URI}/input/data")
 
 
-if __name__ == "__main__":
-    main()
+spark.stop()
