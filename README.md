@@ -5,8 +5,7 @@ Simple search engine assignment using PySpark, Hadoop MapReduce, and Cassandra.
 ## Run
 
 1. Put `a.parquet` in `app/`.
-2. If you want, `app/dataset/a.parquet` also works as a fallback.
-3. Run:
+2. Run:
 
 ```bash
 docker compose up

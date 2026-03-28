@@ -15,7 +15,6 @@ This folder is mounted to `/app` inside the master container.
 ## Paths used
 
 - local parquet: `/app/a.parquet`
-- fallback parquet: `/app/dataset/a.parquet`
 - HDFS documents: `/data`
 - HDFS input: `/input/data`
 - HDFS temp index: `/tmp/indexer`
