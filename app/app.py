@@ -3,6 +3,7 @@ import sys
 import time
 
 from cassandra.cluster import Cluster
+from cassandra.concurrent import execute_concurrent_with_args
 
 
 CASSANDRA_HOST = "cassandra-server"
@@ -34,10 +35,31 @@ def wait_for_schema(cluster, seconds=2):
     time.sleep(seconds)
 
 
+def insert_many(session, query, rows, concurrency=100, chunk_size=2000):
+    prepared = session.prepare(query)
+    pending = []
+
+    for row in rows:
+        pending.append(row)
+        if len(pending) >= chunk_size:
+            results = execute_concurrent_with_args(session, prepared, pending, concurrency=concurrency)
+            for success, result in results:
+                if not success:
+                    raise result
+            pending = []
+
+    if pending:
+        results = execute_concurrent_with_args(session, prepared, pending, concurrency=concurrency)
+        for success, result in results:
+            if not success:
+                raise result
+
+
 def main():
     index_root = sys.argv[1] if len(sys.argv) > 1 else "/indexer"
 
     cluster, session = connect()
+    session.default_timeout = 60
 
     try:
         session.execute(
@@ -61,30 +83,43 @@ def main():
         session.execute("CREATE TABLE corpus_stats (stat_name text PRIMARY KEY, stat_value double)")
         wait_for_schema(cluster, seconds=2)
 
+        vocabulary_rows = []
         for line in hdfs_lines(f"{index_root}/vocabulary"):
             term, df = line.split("\t")
-            session.execute("INSERT INTO vocabulary (term, df) VALUES (%s, %s)", (term, int(df)))
+            vocabulary_rows.append((term, int(df)))
+        insert_many(session, "INSERT INTO vocabulary (term, df) VALUES (?, ?)", vocabulary_rows)
 
+        document_rows = []
         for line in hdfs_lines(f"{index_root}/documents"):
             doc_id, title, doc_length = line.split("\t")
-            session.execute(
-                "INSERT INTO documents (doc_id, title, doc_length) VALUES (%s, %s, %s)",
-                (doc_id, title, int(doc_length)),
-            )
+            document_rows.append((doc_id, title, int(doc_length)))
+        insert_many(
+            session,
+            "INSERT INTO documents (doc_id, title, doc_length) VALUES (?, ?, ?)",
+            document_rows,
+        )
 
+        stats_rows = []
         for line in hdfs_lines(f"{index_root}/stats"):
             stat_name, stat_value = line.split("\t")
-            session.execute(
-                "INSERT INTO corpus_stats (stat_name, stat_value) VALUES (%s, %s)",
-                (stat_name, float(stat_value)),
-            )
+            stats_rows.append((stat_name, float(stat_value)))
+        insert_many(
+            session,
+            "INSERT INTO corpus_stats (stat_name, stat_value) VALUES (?, ?)",
+            stats_rows,
+            concurrency=10,
+            chunk_size=10,
+        )
 
+        posting_rows = []
         for line in hdfs_lines(f"{index_root}/index"):
             term, df, doc_id, title, tf, doc_length = line.split("\t")
-            session.execute(
-                "INSERT INTO postings (term, doc_id, tf, title, doc_length) VALUES (%s, %s, %s, %s, %s)",
-                (term, doc_id, int(tf), title, int(doc_length)),
-            )
+            posting_rows.append((term, doc_id, int(tf), title, int(doc_length)))
+        insert_many(
+            session,
+            "INSERT INTO postings (term, doc_id, tf, title, doc_length) VALUES (?, ?, ?, ?, ?)",
+            posting_rows,
+        )
 
         print("done storing index")
     finally:

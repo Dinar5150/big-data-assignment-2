@@ -3,7 +3,6 @@ import shutil
 import subprocess
 
 from pathvalidate import sanitize_filename
-from tqdm import tqdm
 from pyspark.sql import SparkSession
 
 
@@ -19,7 +18,7 @@ if os.path.isdir("data"):
 os.makedirs("data", exist_ok=True)
 
 
-df = spark.read.parquet("/a.parquet")
+df = spark.read.parquet("hdfs://cluster-master:9000/a.parquet")
 n = 1000
 df = df.select(['id', 'title', 'text']) \
     .dropna(subset=['id', 'title', 'text']) \
@@ -30,7 +29,7 @@ total_docs = df.count()
 if total_docs < n:
     raise RuntimeError(f"Not enough usable documents in parquet file: found {total_docs}, need at least {n}")
 
-df = df.limit(n)
+rows = df.limit(n).collect()
 
 
 def create_doc(row):
@@ -39,7 +38,8 @@ def create_doc(row):
         f.write(row['text'])
 
 
-df.foreach(create_doc)
+for row in rows:
+    create_doc(row)
 
 
 subprocess.run(["hdfs", "dfs", "-rm", "-r", "-f", "/data"], check=True)

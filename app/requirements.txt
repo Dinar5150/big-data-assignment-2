@@ -1,5 +1,2 @@
 cassandra-driver
 pathvalidate
-pyspark
-tqdm
-venv-pack

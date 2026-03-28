@@ -5,7 +5,8 @@ cd /app
 source .venv/bin/activate
 
 if [ $# -ne 1 ] && [ $# -ne 3 ]; then
-    echo "Usage: bash add_to_index.sh <local_file> [doc_id doc_title]"
+    echo "Please pass one local text file."
+    echo "You can also pass a document id and title."
     exit 1
 fi
 
@@ -17,63 +18,55 @@ if [ ! -f "$LOCAL_FILE" ]; then
 fi
 
 mapfile -t DOC_INFO < <(python3 - "$@" <<'PY'
+import hashlib
 import os
+import re
 import sys
 import tempfile
-import time
-from pathlib import Path
 
 from pathvalidate import sanitize_filename
 
 
-def infer_metadata(local_file, doc_id_arg, title_arg):
-    if doc_id_arg and title_arg:
-        return doc_id_arg, title_arg
+def infer_doc_id(path):
+    filename = os.path.splitext(os.path.basename(path))[0]
+    match = re.match(r"^(\d+)[_-](.+)$", filename)
+    if match:
+        return match.group(1), match.group(2).replace("_", " ")
 
-    stem = Path(local_file).stem
+    cleaned = re.sub(r"[^A-Za-z0-9]+", " ", filename).strip()
+    if not cleaned:
+        cleaned = "Added document"
 
-    if "_" in stem:
-        doc_id, title = stem.split("_", 1)
-        if doc_id and title:
-            return doc_id, title.replace("_", " ")
-
-    return str(int(time.time())), stem.replace("_", " ")
-
-
-def main():
-    if len(sys.argv) not in (2, 4):
-        raise SystemExit("Usage: python - <local_file> [doc_id doc_title]")
-
-    local_file = sys.argv[1]
-    doc_id_arg = sys.argv[2] if len(sys.argv) == 4 else ""
-    title_arg = sys.argv[3] if len(sys.argv) == 4 else ""
-
-    if not os.path.isfile(local_file):
-        raise SystemExit(f"Missing local file: {local_file}")
-
-    with open(local_file, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    if not text.strip():
-        raise SystemExit("Local file is empty.")
-
-    doc_id, title = infer_metadata(local_file, doc_id_arg, title_arg)
-    hdfs_name = sanitize_filename(f"{doc_id}_{title}").replace(" ", "_") + ".txt"
-
-    fd, temp_path = tempfile.mkstemp(prefix="add_to_index_", suffix=".txt")
-    os.close(fd)
-
-    with open(temp_path, "w", encoding="utf-8") as f:
-        f.write(text)
-
-    print(temp_path)
-    print(doc_id)
-    print(title)
-    print(hdfs_name)
+    digest = hashlib.sha1(os.path.abspath(path).encode("utf-8")).hexdigest()
+    generated_id = str(int(digest[:12], 16) % 900000000 + 100000000)
+    return generated_id, cleaned
 
 
-if __name__ == "__main__":
-    main()
+args = sys.argv[1:]
+local_file = args[0]
+
+if len(args) == 3:
+    doc_id = args[1]
+    doc_title = args[2]
+else:
+    doc_id, doc_title = infer_doc_id(local_file)
+
+with open(local_file, "r", encoding="utf-8") as handle:
+    text = handle.read().strip()
+
+if not text:
+    raise RuntimeError("The local file is empty.")
+
+filename = sanitize_filename(f"{doc_id}_{doc_title}").replace(" ", "_") + ".txt"
+
+with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8", suffix=".txt") as temp:
+    temp.write(text)
+    temp_path = temp.name
+
+print(temp_path)
+print(doc_id)
+print(doc_title)
+print(filename)
 PY
 )
 
@@ -81,13 +74,9 @@ TEMP_FILE="${DOC_INFO[0]}"
 DOC_ID="${DOC_INFO[1]}"
 DOC_TITLE="${DOC_INFO[2]}"
 HDFS_NAME="${DOC_INFO[3]}"
-REBUILD_SCRIPT=""
 
 cleanup() {
     rm -f "$TEMP_FILE"
-    if [ -n "${REBUILD_SCRIPT:-}" ]; then
-        rm -f "$REBUILD_SCRIPT"
-    fi
 }
 
 trap cleanup EXIT
@@ -95,15 +84,26 @@ trap cleanup EXIT
 hdfs dfs -mkdir -p /data
 hdfs dfs -put -f "$TEMP_FILE" "/data/$HDFS_NAME"
 
-REBUILD_SCRIPT="$(mktemp /tmp/rebuild_input_XXXX.py)"
+REBUILD_SCRIPT="/tmp/rebuild_input.py"
 cat > "$REBUILD_SCRIPT" <<'PY'
-import os
-import subprocess
-
 from pyspark.sql import SparkSession
 
 
+spark = SparkSession.builder.appName("rebuild input").master("local").getOrCreate()
+
+spark.sparkContext._jsc.hadoopConfiguration().set("mapreduce.fileoutputcommitter.marksuccessfuljobs", "true")
+
+spark._jvm.org.apache.hadoop.fs.FileSystem.get(
+    spark._jsc.hadoopConfiguration()
+).delete(
+    spark._jvm.org.apache.hadoop.fs.Path("hdfs://cluster-master:9000/input/data"),
+    True,
+)
+
+
 def doc_to_line(item):
+    import os
+
     path, text = item
     filename = os.path.basename(path)
 
@@ -119,34 +119,14 @@ def doc_to_line(item):
     return "\t".join([doc_id, title, text])
 
 
-def main():
-    spark = (
-        SparkSession.builder
-        .appName("rebuild input")
-        .master("local")
-        .getOrCreate()
-    )
+docs = spark.sparkContext.wholeTextFiles("hdfs://cluster-master:9000/data/*")
+docs.map(doc_to_line).filter(lambda line: line is not None).coalesce(1).saveAsTextFile("hdfs://cluster-master:9000/input/data")
 
-    try:
-        subprocess.run(["hdfs", "dfs", "-rm", "-r", "-f", "/input/data"], check=True)
-        subprocess.run(["hdfs", "dfs", "-mkdir", "-p", "/input"], check=True)
-
-        docs = spark.sparkContext.wholeTextFiles("hdfs://cluster-master:9000/data/*")
-        (
-            docs.map(doc_to_line)
-            .filter(lambda line: line is not None)
-            .coalesce(1)
-            .saveAsTextFile("hdfs://cluster-master:9000/input/data")
-        )
-    finally:
-        spark.stop()
-
-
-if __name__ == "__main__":
-    main()
+spark.stop()
 PY
 
 spark-submit "$REBUILD_SCRIPT"
+rm -f "$REBUILD_SCRIPT"
 bash index.sh
 
 echo "Indexed document:"

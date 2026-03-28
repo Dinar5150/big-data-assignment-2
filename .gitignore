@@ -5,8 +5,8 @@ __pycache__/
 
 app/.venv/
 app/.venv.tar.gz
-app/data/
 app/build/
+app/data/
 app/*.parquet
 !app/a.parquet
 

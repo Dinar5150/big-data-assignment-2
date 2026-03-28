@@ -1,7 +1,6 @@
 import math
 import re
 import sys
-
 from pyspark.sql import SparkSession
 
 
@@ -14,12 +13,6 @@ def tokenize(text):
 
 
 def read_query():
-    if len(sys.argv) > 1:
-        return " ".join(sys.argv[1:]).strip()
-
-    if sys.stdin.isatty():
-        return ""
-
     return sys.stdin.read().strip()
 
 

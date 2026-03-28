@@ -44,8 +44,43 @@ mkdir -p "$BUILD_PATH"
 
 hdfs dfs -text "$TMP_PATH/pipeline1/part-*" > "$BUILD_PATH/pipeline1.tsv"
 hdfs dfs -text "$TMP_PATH/pipeline2/part-*" > "$BUILD_PATH/pipeline2.tsv"
+python3 - "$BUILD_PATH/pipeline1.tsv" "$BUILD_PATH/pipeline2.tsv" "$BUILD_PATH" <<'PY'
+import os
+import sys
 
-python3 split_index_outputs.py "$BUILD_PATH/pipeline1.tsv" "$BUILD_PATH/pipeline2.tsv" "$BUILD_PATH"
+pipeline1_path, pipeline2_path, build_path = sys.argv[1:4]
+
+vocabulary_path = os.path.join(build_path, "vocabulary.tsv")
+index_path = os.path.join(build_path, "index.tsv")
+documents_path = os.path.join(build_path, "documents.tsv")
+stats_path = os.path.join(build_path, "stats.tsv")
+
+with open(vocabulary_path, "w", encoding="utf-8") as vocabulary, \
+        open(index_path, "w", encoding="utf-8") as index, \
+        open(documents_path, "w", encoding="utf-8") as documents:
+    with open(pipeline1_path, "r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            parts = raw_line.rstrip("\n").split("\t")
+            if not parts:
+                continue
+
+            tag = parts[0]
+
+            if tag == "VOCAB" and len(parts) == 3:
+                vocabulary.write(f"{parts[1]}\t{parts[2]}\n")
+            elif tag == "INDEX" and len(parts) == 7:
+                index.write("\t".join(parts[1:]) + "\n")
+            elif tag == "DOC" and len(parts) == 4:
+                documents.write("\t".join(parts[1:]) + "\n")
+
+with open(stats_path, "w", encoding="utf-8") as stats:
+    with open(pipeline2_path, "r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            parts = raw_line.rstrip("\n").split("\t")
+            if len(parts) == 3 and parts[0] == "CORPUS":
+                stats.write(f"total_docs\t{parts[1]}\n")
+                stats.write(f"avg_doc_length\t{parts[2]}\n")
+PY
 
 hdfs dfs -mkdir -p "$INDEX_PATH/vocabulary"
 hdfs dfs -mkdir -p "$INDEX_PATH/index"
