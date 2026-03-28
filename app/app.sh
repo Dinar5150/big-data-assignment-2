@@ -16,4 +16,5 @@ venv-pack -f -o .venv.tar.gz
 
 bash prepare_data.sh
 bash index.sh
-bash search.sh "this is a query!"
+bash search.sh "computer science"
+bash search.sh "history"

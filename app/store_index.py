@@ -27,6 +27,13 @@ def connect():
     raise RuntimeError(f"Could not connect to Cassandra: {last_error}")
 
 
+def wait_for_schema(cluster, seconds=2):
+    control = getattr(cluster, "control_connection", None)
+    if control is not None:
+        control.wait_for_schema_agreement(wait_time=15)
+    time.sleep(seconds)
+
+
 def main():
     index_root = sys.argv[1] if len(sys.argv) > 1 else "/indexer"
 
@@ -39,17 +46,20 @@ def main():
             WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
             """
         )
+        wait_for_schema(cluster, seconds=1)
         session.set_keyspace(KEYSPACE)
 
         session.execute("DROP TABLE IF EXISTS vocabulary")
         session.execute("DROP TABLE IF EXISTS postings")
         session.execute("DROP TABLE IF EXISTS documents")
         session.execute("DROP TABLE IF EXISTS corpus_stats")
+        wait_for_schema(cluster, seconds=1)
 
         session.execute("CREATE TABLE vocabulary (term text PRIMARY KEY, df int)")
         session.execute("CREATE TABLE postings (term text, doc_id text, tf int, title text, doc_length int, PRIMARY KEY (term, doc_id))")
         session.execute("CREATE TABLE documents (doc_id text PRIMARY KEY, title text, doc_length int)")
         session.execute("CREATE TABLE corpus_stats (stat_name text PRIMARY KEY, stat_value double)")
+        wait_for_schema(cluster, seconds=2)
 
         for line in hdfs_lines(f"{index_root}/vocabulary"):
             term, df = line.split("\t")
