@@ -8,6 +8,7 @@ app/.venv.tar.gz
 app/data/
 app/build/
 app/*.parquet
+!app/a.parquet
 
 .DS_Store
 Thumbs.db
