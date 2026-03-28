@@ -7,9 +7,9 @@
 
 ## Introduction
 
-The goal of this assignment was to build a simple search engine on a small big data stack. The system had to use Hadoop MapReduce for indexing, Cassandra or ScyllaDB for persistent storage, and PySpark for ranking query results with BM25.
+The goal of this assignment was to build a search engine using the tools from the course. The required technologies were Hadoop MapReduce for indexing, Cassandra or ScyllaDB for storage, and PySpark for ranking with BM25.
 
-In my implementation, the whole pipeline starts from one Parquet dataset file, prepares 1000 text documents, builds an inverted index with Hadoop Streaming, stores the final index in Cassandra, and runs search queries on YARN in distributed mode. The main workflow can be started with `docker compose up`.
+In my implementation, the workflow starts from one Parquet file, creates 1000 text documents, builds an inverted index with Hadoop Streaming, stores the final index in Cassandra, and runs search queries on YARN in distributed mode. The whole project follows the provided Docker template, so the main workflow can be started with `docker compose up`.
 
 ## Methodology
 
@@ -21,7 +21,7 @@ The project uses three main services defined in `docker-compose.yml`:
 - `cluster-slave-1`
 - `cassandra-server`
 
-The folder `app/` is mounted into the containers as `/app`. The main entrypoint is `app.sh`, which restarts SSH, starts Hadoop and YARN, creates a Python virtual environment, installs the required packages, prepares the data, builds the index, stores it in Cassandra, and finally runs a sample query.
+The folder `app/` is mounted into the containers as `/app`. The main entrypoint is `app.sh`. This script starts Hadoop and YARN, creates the Python virtual environment, installs the required packages, prepares the data, builds the index, stores it in Cassandra, and then runs a sample query.
 
 The main scripts are:
 
@@ -37,7 +37,7 @@ The dataset file used by the project is `a.parquet`. The expected local path is 
 
 The script `prepare_data.sh` first checks that the Parquet file exists, uploads it to HDFS root, and then runs `prepare_data.py` with Spark. In `prepare_data.py`, I read the Parquet file with PySpark and select only the fields `id`, `title`, and `text`. After that, I remove rows with missing values and rows where the text is empty.
 
-The script then checks that there are at least 1000 usable documents. If there are fewer than 1000 valid rows, it stops with an error. Otherwise, it keeps 1000 documents and continues the pipeline.
+After filtering, the script checks that there are at least 1000 usable documents. If the dataset does not have enough valid rows, it stops. Otherwise, it keeps 1000 documents and continues.
 
 ### Document Format and Naming
 
@@ -45,7 +45,7 @@ Each document is written as a separate UTF-8 text file. The naming format is:
 
 `<doc_id>_<doc_title>.txt`
 
-This is implemented in `prepare_data.py`. The filename is sanitized using `sanitize_filename`, and spaces are replaced with underscores. This keeps the filenames safe for the filesystem while still preserving the document id and title.
+This is implemented in `prepare_data.py`. The filename is sanitized using `sanitize_filename`, and spaces are replaced with underscores. This keeps the filenames valid while still preserving the document id and title.
 
 The file content contains only the plain text of the article.
 
@@ -57,7 +57,7 @@ Then the script reads the HDFS documents again with `wholeTextFiles()` and conve
 
 `<doc_id><tab><doc_title><tab><doc_text>`
 
-These lines are written into `/input/data` in HDFS using `coalesce(1)`, so the result is a single partition. This matches the assignment requirement.
+These lines are written into `/input/data` in HDFS using `coalesce(1)`, so the result is a single partition as required in the assignment.
 
 The main HDFS paths used in the project are:
 
@@ -96,7 +96,7 @@ For each input document, it emits:
 - multiple `INDEX` records for postings
 - the `DOC` records are also passed through unchanged
 
-So after pipeline 1, I already have the document list, postings, and vocabulary information needed for ranking.
+After pipeline 1, the output already contains the document list, postings, and vocabulary information needed for ranking.
 
 #### Pipeline 2
 
@@ -109,7 +109,7 @@ The second pipeline computes corpus-level statistics for BM25.
 - total number of documents
 - average document length
 
-These values are required by BM25.
+These values are later used by BM25.
 
 ### Intermediate and Final HDFS Outputs
 
@@ -129,7 +129,7 @@ These files are then uploaded back to HDFS under `/indexer` as:
 - `/indexer/documents/part-00000`
 - `/indexer/stats/part-00000`
 
-This means the final index is stored in HDFS in a clean structure and with one partition for each required component.
+So the final index is stored in HDFS in separate folders, with one partition for each required component.
 
 ### Cassandra Schema Design
 
@@ -142,7 +142,7 @@ It creates four tables:
 - `documents (doc_id text PRIMARY KEY, title text, doc_length int)`
 - `corpus_stats (stat_name text PRIMARY KEY, stat_value double)`
 
-This schema stores the minimum information needed for searching with BM25:
+This schema stores the main information needed for BM25 search:
 
 - vocabulary with document frequency
 - postings with term frequency and document length
@@ -173,7 +173,7 @@ The constants used are:
 - `K1 = 1.0`
 - `B = 0.75`
 
-The score for each term-document pair is calculated, then all partial scores for the same document are added together. This aggregation is done with the PySpark RDD API using `parallelize`, `map`, `reduceByKey`, and `takeOrdered`. The final output is the top 10 ranked documents.
+The score is calculated for each term-document pair, then the partial scores for the same document are added together. This aggregation is done with the PySpark RDD API using `parallelize`, `map`, `reduceByKey`, and `takeOrdered`. The final output is the top 10 ranked documents.
 
 The output format is simple:
 
@@ -186,28 +186,26 @@ The script `search.sh` runs `query.py` with:
 - `--master yarn`
 - `--deploy-mode cluster`
 
-This means the query application is submitted to YARN in distributed mode. The script also sets the Python path so that the packages installed in `/app/.venv` are available to the Spark application.
+This runs the query application on YARN in distributed mode. The script also sets the Python path so that the packages installed in `/app/.venv` are available to Spark.
 
-To keep the setup stable on this small cluster, the script uses small explicit resource settings:
+The script uses explicit resource settings for this cluster:
 
 - 1 executor
 - 1 core
 - 512 MB executor memory
 - 512 MB driver memory
 
-The query text is passed as a command-line argument. This is important because it avoids blocking problems that can happen if the application waits for standard input in cluster mode.
+The query text is passed as a command-line argument, which fits the way the project runs in YARN cluster mode.
 
 ### Important Design Choices
 
-I made a few simple design choices in this project.
+The tokenizer lowercases text and keeps only letters and digits. I used the same rule in both indexing and querying so the terms are handled consistently.
 
-First, I used a very basic tokenizer. It lowercases text and keeps only letters and digits. This is easy to understand and easy to implement, but it is not as advanced as a real search engine tokenizer.
+Each Hadoop Streaming job uses one reducer. In this project, that produces one final output partition for each stage, which fits the later HDFS and Cassandra loading steps.
 
-Second, I used one reducer in each Hadoop job. This is not the most scalable option, but it guarantees one final output partition and makes the later storage step much simpler.
+The Cassandra schema stores the vocabulary, postings, document metadata, and corpus statistics in separate tables. This matches what `query.py` needs during BM25 ranking.
 
-Third, I kept the Cassandra schema straightforward instead of trying to optimize it too much. Since the assignment focuses more on the pipeline than on large-scale database tuning, I preferred a design that is easy to inspect and debug.
-
-Finally, the Docker cluster is intentionally small. It includes one master node, one worker node, and one Cassandra node. This is enough to demonstrate the required distributed workflow without making the environment too complicated.
+The Docker cluster contains one master node, one worker node, and one Cassandra node. This setup is enough to demonstrate the required distributed workflow for the assignment.
 
 ## Demonstration
 
@@ -246,7 +244,7 @@ During indexing, `create_index.sh` runs the two Hadoop Streaming jobs. After tha
 
 During storage, `store_index.py` creates the Cassandra keyspace and tables, then inserts the data from HDFS into Cassandra.
 
-During search, `search.sh` submits `query.py` to YARN in cluster mode. The application reads the index from Cassandra, computes BM25 scores, and prints the top 10 documents.
+During search, `search.sh` submits `query.py` to YARN in cluster mode. The application reads the index from Cassandra, calculates BM25 scores, and prints the top 10 documents.
 
 ### Commands Used for Manual Validation
 
@@ -297,27 +295,15 @@ This screenshot should show a successful search run for a second query like `his
 
 ## Results and Reflection
 
-Overall, the search engine worked as expected after I fixed a few practical runtime issues. The full flow from Parquet input to HDFS, Hadoop MapReduce indexing, Cassandra storage, and YARN-based search was able to run successfully.
+Overall, the search engine worked as expected. The full flow from Parquet input to HDFS, Hadoop MapReduce indexing, Cassandra storage, and YARN-based search ran successfully.
 
-The `history` query gave more clearly relevant results than `computer science`, which makes sense because the tokenizer and ranking logic are simple. The system still returned ranked results correctly, but the quality depends a lot on the dataset and the basic normalization used in the project.
-
-During testing, I had to fix a few real execution problems. The main ones were shell script line-ending issues on Windows, a problem in the document selection step during data preparation, and handling the query input correctly in YARN cluster mode. After these fixes, the system became stable enough for the required assignment workflow.
-
-There are still some limitations in this implementation:
-
-- the tokenizer is very simple
-- there is no stemming or stop-word removal
-- the cluster is very small
-- the index is rebuilt from scratch each time
-- the evaluation is based on a few manual queries, not a formal IR benchmark
-
-So I would say the system is a correct simple search engine for the assignment, but it is still far from a production search engine.
+The `history` query gave more obviously relevant results than `computer science`. The ranking still worked for both, but the result quality depends a lot on the dataset and the normalization used in the project.
 
 ## Conclusion
 
-In this assignment, I built a simple search engine that combines several big data tools in one pipeline. Hadoop MapReduce was used to build the index, Cassandra was used to store the final search data, and PySpark with BM25 was used to rank query results.
+In this assignment, I built a search engine pipeline that combines several big data tools. Hadoop MapReduce was used to build the index, Cassandra was used to store the final search data, and PySpark with BM25 was used to rank query results.
 
-The project helped me understand how these components fit together in practice. The most useful part for me was seeing the full workflow from raw dataset preparation to distributed search execution on YARN. It also showed me that making the system run correctly in a containerized environment can be just as important as the core algorithm itself.
+This project helped me understand how these components work together in practice. The most useful part for me was seeing the whole workflow, from raw dataset preparation to distributed search execution on YARN.
 
 ## References
 
