@@ -25,6 +25,8 @@ services:
   cluster-slave-1:
     image: firasj/spark-docker-cluster
     container_name: cluster-slave-1
+    volumes:
+      - "./app:/app"
     networks:
       - spark-cluster
     hostname: cluster-slave-1
@@ -33,6 +35,9 @@ services:
   cassandra-server:
     image: cassandra
     container_name: cassandra-server
+    environment:
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 256M
     ports:
       - "7000:7000"
     networks:

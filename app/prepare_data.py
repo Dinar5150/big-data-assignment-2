@@ -10,7 +10,7 @@ from pyspark.sql import SparkSession
 spark = SparkSession.builder \
     .appName('data preparation') \
     .master("local") \
-    .config("spark.sql.parquet.enableVectorizedReader", "true") \
+    .config("spark.sql.parquet.enableVectorizedReader", "false") \
     .getOrCreate()
 
 
@@ -23,9 +23,14 @@ df = spark.read.parquet("/a.parquet")
 n = 1000
 df = df.select(['id', 'title', 'text']) \
     .dropna(subset=['id', 'title', 'text']) \
-    .filter("trim(text) <> ''") \
-    .sample(fraction=100 * n / df.count(), seed=0) \
-    .limit(n)
+    .filter("trim(text) <> ''")
+
+total_docs = df.count()
+
+if total_docs < n:
+    raise RuntimeError(f"Not enough usable documents in parquet file: found {total_docs}, need at least {n}")
+
+df = df.limit(n)
 
 
 def create_doc(row):

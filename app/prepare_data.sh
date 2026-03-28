@@ -20,7 +20,7 @@ if [ ! -f "$PARQUET_FILE" ]; then
 fi
 
 hdfs dfs -put -f "$PARQUET_FILE" / && \
-    spark-submit prepare_data.py && \
+    spark-submit --driver-memory 3g prepare_data.py && \
     echo "done data preparation!" && \
     hdfs dfs -ls /data && \
     hdfs dfs -ls /input/data
