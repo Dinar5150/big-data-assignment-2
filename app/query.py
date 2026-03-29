@@ -1,3 +1,4 @@
+import os
 import math
 import re
 import sys
@@ -29,6 +30,17 @@ def bm25(tf, df, doc_length, total_docs, avg_doc_length):
     return idf * ((tf * (K1 + 1.0)) / bottom)
 
 
+def write_output(sc, lines):
+    output_path = os.environ.get("SEARCH_OUTPUT_PATH", "").strip()
+    if not output_path:
+        return
+
+    hdfs_path = f"hdfs://cluster-master:9000{output_path}"
+    filesystem = sc._jvm.org.apache.hadoop.fs.FileSystem.get(sc._jsc.hadoopConfiguration())
+    filesystem.delete(sc._jvm.org.apache.hadoop.fs.Path(hdfs_path), True)
+    sc.parallelize(lines, 1).saveAsTextFile(hdfs_path)
+
+
 def main():
     query = read_query()
     terms = tokenize(query)
@@ -54,6 +66,7 @@ def main():
         avg_doc_length = float(stats.get("avg_doc_length", 0.0))
 
         if total_docs == 0 or avg_doc_length == 0:
+            write_output(sc, ["No index statistics found."])
             print("No index statistics found.")
             return
 
@@ -80,6 +93,7 @@ def main():
                 rows.append((posting.doc_id, posting.title, score))
 
         if not rows:
+            write_output(sc, ["No results found."])
             print("No results found.")
             return
 
@@ -91,11 +105,15 @@ def main():
         )
 
         if not top:
+            write_output(sc, ["No results found."])
             print("No results found.")
             return
 
-        for (doc_id, title), score in top:
-            print(f"{doc_id}\t{title.replace('_', ' ')}")
+        output_lines = [f"{doc_id}\t{title.replace('_', ' ')}" for (doc_id, title), score in top]
+        write_output(sc, output_lines)
+
+        for line in output_lines:
+            print(line)
     finally:
         session.shutdown()
         cluster.shutdown()
