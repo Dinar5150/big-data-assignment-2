@@ -32,18 +32,18 @@ For search, I used `search.sh` and `query.py`. The query text is passed to `sear
 
 The search script runs on YARN in cluster mode. This was useful for me because it showed how the search step can also run as a distributed job, not only the indexing step.
 
-For the optional task, I added `add_to_index.sh`. This script takes one local text file, uploads it to HDFS `/data`, rebuilds `/input/data`, reruns the indexing steps, and updates the Cassandra tables. Because of that, the search engine can include a new file after the first index has already been created.
+For the optional task, I added `add_to_index.sh`. This script takes one local text file, uploads it to HDFS `/data`, rebuilds `/input/data`, reruns the indexing steps, and updates the Cassandra tables. The script uses the local file name as the document title and creates a new document id from the current time. Because of that, the search engine can include a new file after the first index has already been created.
 
 ## Demonstration
 
-To run the repository, I use:
+To run the repository, use:
 
 ```bash
 git lfs pull
 docker compose up
 ```
 
-I need `git lfs pull` first because the large `a.parquet` file is stored with Git LFS.
+We need `git lfs pull` first because the large `a.parquet` file is stored with Git LFS.
 
 The automatic flow is:
 
@@ -55,7 +55,7 @@ The automatic flow is:
 6. run `search.sh "computer science"`
 7. run `search.sh "history"`
 
-For manual checking after startup, I used commands like these:
+For manual checking after startup, I used these commands:
 
 ```bash
 docker exec -it cluster-master bash
@@ -70,16 +70,9 @@ bash search.sh "history"
 
 These commands are also part of the normal automatic flow in `app.sh`. I ran them manually for the screenshots only because it was easier to capture the output step by step without the extra service startup messages.
 
-The `search.sh` script takes the query as an argument, then sends it to `query.py` through stdin.
+The `search.sh` script takes the query as an argument, then sends it to `query.py`.
 
-I also checked Cassandra with:
-
-```bash
-docker exec -it cassandra-server cqlsh -e "DESCRIBE KEYSPACE search_engine;"
-docker exec -it cassandra-server cqlsh -e "SELECT * FROM search_engine.corpus_stats;"
-```
-
-In the successful run, the project created `/data`, `/input/data`, and `/indexer` in HDFS, and Cassandra stored the final index tables. The corpus statistics showed `total_docs = 1000` and `avg_doc_length = 575.759`, so the indexing step finished correctly.
+In the completed run, the project created `/data`, `/input/data`, and `/indexer` in HDFS, and Cassandra stored the final index tables. The corpus statistics showed `total_docs = 1000` and `avg_doc_length = 575.759`, so the indexing step finished correctly.
 
 For testing the search engine, I used the queries `computer science` and `history`. The query `history` gave more clearly related results. Some of the returned titles were:
 
@@ -96,39 +89,61 @@ For the optional task, a new text file can be added with:
 ```bash
 docker exec -it cluster-master bash
 cd /app
-bash add_to_index.sh /app/my_new_document.txt
+printf 'This is a new document for the optional task.\n' > /app/New_Document.txt
+bash add_to_index.sh /app/New_Document.txt
+bash search.sh "new document"
 ```
 
-This command adds the file into the existing pipeline, rebuilds the input for indexing, and updates the Cassandra data.
+This command adds the file into the existing pipeline, rebuilds the input for indexing, and updates the Cassandra data. In my script, the file name becomes the document title, and a new document id is generated automatically.
 
-I also tested the optional task with a file called `Optional Added Document`. After running `add_to_index.sh`, the Cassandra statistics changed from `total_docs = 1000` to `total_docs = 1001`, so the new file was included in the index.
+I also tested the optional task with a file called `New_Document.txt`. After running `add_to_index.sh`, the Cassandra statistics changed from `total_docs = 1000` to `total_docs = 1001`, so the new file was included in the index.
 
 The following screenshots are from my successful runs:
 
 I also saved the full terminal output from the successful manual run in `screenshots/logs.txt`, so the complete indexing and query logs are available in text form too.
 
-![Indexing screenshot 1](screenshots/index1.png)
+![Start services and prepare data](screenshots/start-services-and-prepare-data.png)
 
-This screenshot shows the beginning of the indexing run after the prepared data was already available in HDFS.
+This screenshot shows the manual run after entering `cluster-master`, starting Hadoop services, and launching data preparation.
 
-![Indexing screenshot 2](screenshots/index2.png)
+![Indexing screenshot 1](screenshots/index.png)
 
-This screenshot shows the first MapReduce indexing pipeline while the Hadoop job is running.
+This screenshot shows the beginning of `bash index.sh` and the first Hadoop Streaming pipeline starting.
 
-![Indexing screenshot 3](screenshots/index3.png)
+![Indexing screenshot 2](screenshots/index-finish.png)
 
-This screenshot shows the indexing process continuing with Hadoop Streaming output and job progress.
+This screenshot shows the end of the indexing step with the `/indexer` folders and the final `done storing index` message.
 
-![Indexing screenshot 4](screenshots/index4.png)
+![Query screenshot 1](screenshots/query1.png)
 
-This screenshot shows the later stage of indexing when the pipelines are close to finishing.
+This screenshot shows the first query run for `computer science` while the Spark job is being launched on YARN.
 
-![Indexing screenshot 5](screenshots/index5.png)
+![Query screenshot 1 finished](screenshots/query1-finish.png)
 
-This screenshot shows the end of `bash index.sh`. It includes the `/indexer` folders and the final `done storing index` message after the MapReduce pipelines finished successfully.
+This screenshot shows the final ranked results for the query `computer science`.
 
-![Fullscreen screenshot of successful search queries](screenshots/queries.png)
+![Query screenshot 2](screenshots/query2.png)
 
-This screenshot shows two successful query runs, `computer science` and `history`, with the returned document ids and titles.
+This screenshot shows the second query run for `history` during the YARN job startup.
+
+![Query screenshot 2 finished](screenshots/query2-finish.png)
+
+This screenshot shows the final ranked results for the query `history`.
+
+![Optional task indexing screenshot 1](screenshots/opt-index.png)
+
+This screenshot shows the optional `add_to_index.sh` task while the new document is being added and the indexing step is running again.
+
+![Optional task indexing screenshot 2](screenshots/opt-index-finish.png)
+
+This screenshot shows the end of the optional indexing step after the new document was added to the search engine.
+
+![Optional task search screenshot 1](screenshots/opt-search.png)
+
+This screenshot shows the search run for `new document` after the optional task was executed.
+
+![Optional task search screenshot 2](screenshots/opt-search-final.png)
+
+This screenshot shows the final search results after adding the new document, which confirms that the optional task updated the index correctly.
 
 This assignment helped me understand how the pieces connect in one full workflow, from preparation, to indexing, to storage, and finally to query-time ranking.

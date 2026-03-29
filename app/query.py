@@ -57,19 +57,18 @@ def main():
     cluster = Cluster(["cassandra-server"])
     session = cluster.connect("search_engine")
 
-    try:
-        stats = {}
-        for row in session.execute("SELECT stat_name, stat_value FROM corpus_stats"):
-            stats[row.stat_name] = row.stat_value
+    stats = {}
+    for row in session.execute("SELECT stat_name, stat_value FROM corpus_stats"):
+        stats[row.stat_name] = row.stat_value
 
-        total_docs = int(stats.get("total_docs", 0))
-        avg_doc_length = float(stats.get("avg_doc_length", 0.0))
+    total_docs = int(stats.get("total_docs", 0))
+    avg_doc_length = float(stats.get("avg_doc_length", 0.0))
 
-        if total_docs == 0 or avg_doc_length == 0:
-            write_output(sc, ["No index statistics found."])
-            print("No index statistics found.")
-            return
+    output_lines = []
 
+    if total_docs == 0 or avg_doc_length == 0:
+        output_lines = ["No index statistics found."]
+    else:
         rows = []
         for term in terms:
             df_row = session.execute("SELECT df FROM vocabulary WHERE term = %s", (term,)).one()
@@ -93,31 +92,28 @@ def main():
                 rows.append((posting.doc_id, posting.title, score))
 
         if not rows:
-            write_output(sc, ["No results found."])
-            print("No results found.")
-            return
+            output_lines = ["No results found."]
+        else:
+            top = (
+                sc.parallelize(rows)
+                .map(lambda row: ((row[0], row[1]), row[2]))
+                .reduceByKey(lambda left, right: left + right)
+                .takeOrdered(10, key=lambda row: -row[1])
+            )
 
-        top = (
-            sc.parallelize(rows)
-            .map(lambda row: ((row[0], row[1]), row[2]))
-            .reduceByKey(lambda left, right: left + right)
-            .takeOrdered(10, key=lambda row: -row[1])
-        )
+            if not top:
+                output_lines = ["No results found."]
+            else:
+                output_lines = [f"{doc_id}\t{title.replace('_', ' ')}" for (doc_id, title), score in top]
 
-        if not top:
-            write_output(sc, ["No results found."])
-            print("No results found.")
-            return
+    write_output(sc, output_lines)
 
-        output_lines = [f"{doc_id}\t{title.replace('_', ' ')}" for (doc_id, title), score in top]
-        write_output(sc, output_lines)
+    for line in output_lines:
+        print(line)
 
-        for line in output_lines:
-            print(line)
-    finally:
-        session.shutdown()
-        cluster.shutdown()
-        spark.stop()
+    session.shutdown()
+    cluster.shutdown()
+    spark.stop()
 
 
 if __name__ == "__main__":

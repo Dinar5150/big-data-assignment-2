@@ -9,7 +9,6 @@ PYTHON_SITE_PACKAGES="/app/.venv/lib/python3.8/site-packages:/app/.venv/lib64/py
 QUERY_FILE="/tmp/query_input.txt"
 RUNNER_FILE="/tmp/query_entry.py"
 RESULT_PATH="/tmp/search_results_$(date +%s%N)"
-SUBMIT_LOG="$(mktemp)"
 
 if [ -z "$QUERY" ]; then
     echo "Please pass a query."
@@ -18,7 +17,7 @@ fi
 
 cleanup() {
     hdfs dfs -rm -r -f "$RESULT_PATH" >/dev/null 2>&1 || true
-    rm -f "$QUERY_FILE" "$RUNNER_FILE" "$SUBMIT_LOG"
+    rm -f "$QUERY_FILE" "$RUNNER_FILE"
 }
 
 trap cleanup EXIT
@@ -36,7 +35,7 @@ import query
 query.main()
 PY
 
-if ! env \
+env \
     -u VIRTUAL_ENV \
     -u PYTHONHOME \
     -u PYSPARK_DRIVER_PYTHON \
@@ -59,15 +58,6 @@ if ! env \
     --conf spark.executorEnv.PYTHONPATH="${PYTHON_SITE_PACKAGES}" \
     --conf spark.yarn.appMasterEnv.PYTHONPATH="${PYTHON_SITE_PACKAGES}" \
     --conf spark.yarn.appMasterEnv.SEARCH_OUTPUT_PATH="${RESULT_PATH}" \
-    "$RUNNER_FILE" >"$SUBMIT_LOG" 2>&1; then
-    cat "$SUBMIT_LOG"
-    exit 1
-fi
-
-if ! hdfs dfs -test -e "$RESULT_PATH/part-00000"; then
-    cat "$SUBMIT_LOG"
-    echo "The query finished, but no output file was written."
-    exit 1
-fi
+    "$RUNNER_FILE"
 
 hdfs dfs -text "$RESULT_PATH/part-*"
