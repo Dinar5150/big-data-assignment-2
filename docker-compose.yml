@@ -1,6 +1,6 @@
 services:
   cluster-master:
-    image: firasj/spark-docker-cluster
+    image: dinar5150/spark-docker-cluster
     container_name: cluster-master
     ports:
       - "8088:8088"
@@ -23,7 +23,7 @@ services:
       - /app/app.sh
 
   cluster-slave-1:
-    image: firasj/spark-docker-cluster
+    image: dinar5150/spark-docker-cluster
     container_name: cluster-slave-1
     volumes:
       - "./app:/app"
