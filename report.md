@@ -3,7 +3,7 @@
 Assignment link: https://firas-jolha.github.io/bigdata/html/bs/BS%20-%20Assignment%202%20-%20Simple%20Search%20Engine%20using%20Hadoop%20MapReduce.html
 
 Name: Dinar Yakupov
-Course: B23-DS-01
+Group: B23-DS-01
 
 ## Methodology
 
@@ -68,6 +68,8 @@ bash search.sh "computer science"
 bash search.sh "history"
 ```
 
+These commands are also part of the normal automatic flow in `app.sh`. I ran them manually for the screenshots only because it was easier to capture the output step by step without the extra service startup messages.
+
 The `search.sh` script takes the query as an argument, then sends it to `query.py` through stdin.
 
 I also checked Cassandra with:
@@ -85,7 +87,9 @@ For testing the search engine, I used the queries `computer science` and `histor
 - `A Briefer History of Time`
 - `A Brief History of Everyone Who Ever Lived`
 
-The query `computer science` also returned valid results, but they were not as clearly related as the `history` query. My understanding is that this happens because the tokenizer is basic and the ranker only uses the information stored in the index, so the result quality depends a lot on the words that appear in the dataset.
+I looked at the returned documents to understand why they were ranked. For `history`, the results were easier to understand because the word `history` appears directly in both the titles and the document text. For example, `A Brief History of Chinese Fiction` is a book about the history of Chinese fiction, `A Brief History of Everyone Who Ever Lived` explicitly says it is about human genetics and human history, and `A Chance to Make History` also repeats the same word in the title and body. Because of that, BM25 gives these documents strong scores for the query term.
+
+The query `computer science` was more mixed, but I could still see why some of the returned entities appeared. The top result, `A B M Shawkat Ali`, is a good example because the article text says that he is a `computer scientist`, that he studied `computer science and engineering`, and that he works in `data science`. Another result, `A Can of Paint`, looks strange at first, but the text clearly calls it a `science fiction` short story, so it can still get a score from the word `science`. `A Brief History of Time (film)` and `A Briefer History of Time` also contain science-related wording in their texts. This showed me that my search engine is ranking by the full article text stored in the index, not just by the title, and it also scores the query terms separately instead of requiring the exact phrase `computer science`.
 
 For the optional task, a new text file can be added with:
 
@@ -101,16 +105,30 @@ I also tested the optional task with a file called `Optional Added Document`. Af
 
 The following screenshots are from my successful runs:
 
-![Fullscreen screenshot of successful indexing](screenshots/indexing-success.png)
+I also saved the full terminal output from the successful manual run in `screenshots/logs.txt`, so the complete indexing and query logs are available in text form too.
 
-This screenshot shows the terminal after the index was created successfully. It includes the `/indexer` folders and the final corpus statistics stored in Cassandra.
+![Indexing screenshot 1](screenshots/index1.png)
 
-![Fullscreen screenshot of search query 1](screenshots/query1.png)
+This screenshot shows the beginning of the indexing run after the prepared data was already available in HDFS.
 
-This screenshot shows a successful query run for `computer science` with the returned document ids and titles.
+![Indexing screenshot 2](screenshots/index2.png)
 
-![Fullscreen screenshot of search query 2](screenshots/query2.png)
+This screenshot shows the first MapReduce indexing pipeline while the Hadoop job is running.
 
-This screenshot shows a successful query run for `history` with the ranked results.
+![Indexing screenshot 3](screenshots/index3.png)
 
-Since I am still learning big data tools, this assignment helped me understand how the pieces connect in one full workflow. Before this, I mostly understood Hadoop, Spark, and Cassandra separately. In this project, I got more practice with how data moves from preparation, to indexing, to storage, and finally to query-time ranking.
+This screenshot shows the indexing process continuing with Hadoop Streaming output and job progress.
+
+![Indexing screenshot 4](screenshots/index4.png)
+
+This screenshot shows the later stage of indexing when the pipelines are close to finishing.
+
+![Indexing screenshot 5](screenshots/index5.png)
+
+This screenshot shows the end of `bash index.sh`. It includes the `/indexer` folders and the final `done storing index` message after the MapReduce pipelines finished successfully.
+
+![Fullscreen screenshot of successful search queries](screenshots/queries.png)
+
+This screenshot shows two successful query runs, `computer science` and `history`, with the returned document ids and titles.
+
+This assignment helped me understand how the pieces connect in one full workflow, from preparation, to indexing, to storage, and finally to query-time ranking.
